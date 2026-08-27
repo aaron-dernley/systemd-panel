@@ -11,6 +11,8 @@ models:
 additionalFiles:
   - README.md
   - LICENSE
+
+binaries:
   - swamp-panel
 
 platforms:

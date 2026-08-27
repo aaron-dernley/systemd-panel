@@ -77,6 +77,7 @@ export function parseIsActive(
   return { active: activeRaw === "active", activeRaw };
 }
 
+/** Result of probing a `kind: "service"` instance via `systemctl show`. */
 export interface ServiceStatus {
   lastRunAt: string | null;
   lastRunStatus: "running" | "stopped" | "failed" | "unknown";
@@ -123,6 +124,7 @@ export function parseServiceShow(showOutput: string): ServiceStatus {
   return { lastRunAt, lastRunStatus: "unknown", lastRunDetail: null };
 }
 
+/** Result of probing a `kind: "timer"` instance's paired service journal. */
 export interface TimerJournalStatus {
   lastRunAt: string | null;
   lastRunStatus: "succeeded" | "failed" | "unknown";
@@ -389,6 +391,9 @@ export const model = {
         "Refresh status from systemctl/journalctl. Zero-arg, safe, read-only.",
       arguments: z.object({}),
       execute: async (_args: Record<string, never>, context: MethodContext) => {
+        context.logger.info("Syncing status for {unit}", {
+          unit: context.globalArgs.unit,
+        });
         const status = await probeStatus(context.globalArgs);
         context.logger.info(
           "{unit}: enabled={enabled} active={active} lastRunStatus={lastRunStatus}",
@@ -408,6 +413,9 @@ export const model = {
         "systemctl enable --now the controlled unit, then refresh status.",
       arguments: z.object({}),
       execute: async (_args: Record<string, never>, context: MethodContext) => {
+        context.logger.info("Enabling {unit}", {
+          unit: context.globalArgs.unit,
+        });
         await setEnabled(context.globalArgs, true);
         const status = await probeStatus(context.globalArgs);
         context.logger.info("Enabled {unit}", { unit: status.unit });
@@ -420,6 +428,9 @@ export const model = {
         "systemctl disable --now the controlled unit, then refresh status.",
       arguments: z.object({}),
       execute: async (_args: Record<string, never>, context: MethodContext) => {
+        context.logger.info("Disabling {unit}", {
+          unit: context.globalArgs.unit,
+        });
         await setEnabled(context.globalArgs, false);
         const status = await probeStatus(context.globalArgs);
         context.logger.info("Disabled {unit}", { unit: status.unit });

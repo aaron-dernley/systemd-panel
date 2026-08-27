@@ -394,3 +394,31 @@ Deno.test("disable runs sudo systemctl disable --now, then writes refreshed stat
   const data = getWrittenResources()[0].data as { enabled: boolean };
   assertEquals(data.enabled, false);
 });
+
+Deno.test("enable on a service instance re-probes via systemctl show, not journalctl", async () => {
+  const { context, getWrittenResources } = createModelTestContext({
+    globalArgs: SERVICE_GLOBAL_ARGS,
+    methodName: "enable",
+  });
+
+  await withMockedCommand((command, args) => {
+    if (command === "sudo") return { stdout: "", code: 0 };
+    if (command === "systemctl" && args[0] === "is-enabled") {
+      return { stdout: "enabled\n", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "is-active") {
+      return { stdout: "active\n", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "show") {
+      return { stdout: REAL_RUNNING_SHOW, code: 0 };
+    }
+    throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
+  }, () => model.methods.enable.execute({}, asContext(context)));
+
+  const data = getWrittenResources()[0].data as {
+    enabled: boolean;
+    lastRunStatus: string;
+  };
+  assertEquals(data.enabled, true);
+  assertEquals(data.lastRunStatus, "running");
+});

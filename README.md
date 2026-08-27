@@ -25,13 +25,12 @@ swamp extension pull @aaronge/systemd-panel
 ```
 
 Optionally, also grab the bundled interactive CLI toolkit
-(`swamp-panel`), which ships as an additional file in the package. After
-pulling, it's cached at
-`.swamp/pulled-extensions/@aaronge/systemd-panel/files/swamp-panel` inside
-your repo — copy or symlink it onto your `PATH`:
+(`swamp-panel`), which ships as a `binaries` entry in the package (so its
+executable bit survives the pull) and is cached locally under
+`.swamp/pulled-extensions/`. Find it and put it on your `PATH`:
 
 ```sh
-install -m 755 .swamp/pulled-extensions/@aaronge/systemd-panel/files/swamp-panel ~/.local/bin/swamp-panel
+find .swamp/pulled-extensions -name swamp-panel -exec install -m 755 {} ~/.local/bin/swamp-panel \;
 ```
 
 `enable`/`disable` shell out to `sudo systemctl enable|disable --now
