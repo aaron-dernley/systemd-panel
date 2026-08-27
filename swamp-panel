@@ -6,6 +6,13 @@
 # Run from the repo dir the instances live in (or set SWAMP_REPO_DIR).
 set -euo pipefail
 
+# If the shell has SWAMP_SERVE_URL set (e.g. for an apt-inventory-style
+# `swamp serve` toolkit), every `swamp` command below would talk to that
+# remote server's repo instead of the local one this tool operates on,
+# silently ignoring cwd/SWAMP_REPO_DIR entirely. This tool is always
+# local-repo-only, so drop it for this process only.
+unset SWAMP_SERVE_URL
+
 MODEL_TYPE="@aaronge/systemd-panel"
 
 usage() {
