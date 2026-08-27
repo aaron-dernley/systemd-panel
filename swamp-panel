@@ -116,7 +116,10 @@ toggle() {
 }
 
 watch_cmd() {
-  setsid foot -T "swamp-panel monitor" watch -n 30 -c swamp-panel >/dev/null 2>&1 &
+  # Pin the spawned terminal's cwd explicitly rather than relying on
+  # inheritance — some terminal spawn paths don't carry the launching
+  # shell's cwd through.
+  setsid foot -D "$PWD" -T "swamp-panel monitor" watch -n 30 -c swamp-panel >/dev/null 2>&1 &
   disown
   echo "Opened. Close the window whenever you don't need it — it's independent of this shell."
 }
