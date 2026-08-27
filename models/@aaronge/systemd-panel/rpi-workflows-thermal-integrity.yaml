@@ -1,5 +1,5 @@
 type: '@aaronge/systemd-panel'
-typeVersion: 2026.08.27.1
+typeVersion: 2026.08.27.2
 id: 4ed44063-d1d9-4ef2-acd2-a3362674f370
 name: rpi-workflows-thermal-integrity
 version: 1

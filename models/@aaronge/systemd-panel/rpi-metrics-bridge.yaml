@@ -1,5 +1,5 @@
 type: '@aaronge/systemd-panel'
-typeVersion: 2026.08.27.1
+typeVersion: 2026.08.27.2
 id: 81eebd52-64d9-43cd-92d3-0704247a3484
 name: rpi-metrics-bridge
 version: 1

@@ -374,8 +374,16 @@ interface MethodContext {
 /** Model definition for `@aaronge/systemd-panel` — generic systemd unit control. */
 export const model = {
   type: "@aaronge/systemd-panel",
-  version: "2026.08.27.1",
+  version: "2026.08.27.2",
   globalArguments: GlobalArgsSchema,
+  upgrades: [
+    {
+      toVersion: "2026.08.27.2",
+      description:
+        "Version bump, no schema changes (bundled swamp-panel CLI fix only).",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+  ],
   resources: {
     status: {
       description:

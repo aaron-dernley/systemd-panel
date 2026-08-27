@@ -1,5 +1,5 @@
 type: '@aaronge/systemd-panel'
-typeVersion: 2026.08.27.1
+typeVersion: 2026.08.27.2
 id: 90c56cda-3952-44f2-80da-a02a2827bc74
 name: rpi-gpio-inventory
 version: 1

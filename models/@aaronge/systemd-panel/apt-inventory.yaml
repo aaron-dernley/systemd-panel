@@ -1,5 +1,5 @@
 type: '@aaronge/systemd-panel'
-typeVersion: 2026.08.27.1
+typeVersion: 2026.08.27.2
 id: d3218761-036e-495f-8d6e-3bdcfa72b530
 name: apt-inventory
 version: 1

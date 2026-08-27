@@ -1,5 +1,5 @@
 type: '@aaronge/systemd-panel'
-typeVersion: 2026.08.27.1
+typeVersion: 2026.08.27.2
 id: 9d592c97-1f04-4088-b9d4-26fe3c1e100b
 name: rpi-workflows-power-integrity
 version: 1
