@@ -1,0 +1,15 @@
+type: '@aaronge/systemd-panel'
+typeVersion: 2026.08.27.1
+id: d3218761-036e-495f-8d6e-3bdcfa72b530
+name: apt-inventory
+version: 1
+tags: {}
+globalArguments:
+  unit: swamp-serve.service
+  kind: service
+  label: apt-inventory
+  useSudo: true
+  systemctlPath: systemctl
+  journalctlPath: journalctl
+  sudoPath: sudo
+methods: {}

@@ -1,0 +1,150 @@
+#!/bin/bash
+# Interactive on/off + status dashboard for @aaronge/systemd-panel model
+# instances. Discovers instances dynamically (swamp model search --json,
+# filtered by type) — never a hardcoded unit list, so this works against
+# any repo's own @aaronge/systemd-panel instances, not just one machine's.
+# Run from the repo dir the instances live in (or set SWAMP_REPO_DIR).
+set -euo pipefail
+
+MODEL_TYPE="@aaronge/systemd-panel"
+
+usage() {
+  cat <<'EOF'
+Usage: swamp-panel [status|toggle|on <name>|off <name>|watch]
+  (no args)   sync every instance and print the status dashboard
+  toggle      interactively enable/disable one instance
+  on <name>   enable one instance directly
+  off <name>  disable one instance directly
+  watch       open a self-refreshing dashboard in a new terminal
+EOF
+}
+
+instances() {
+  swamp model search --json | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for r in d.get('results', []):
+    if r.get('type') == '$MODEL_TYPE':
+        print(r['name'])
+"
+}
+
+sync_all() {
+  local names
+  mapfile -t names < <(instances)
+  if [ ${#names[@]} -eq 0 ]; then
+    echo "No $MODEL_TYPE instances found in this repo. See README.md for" \
+      "'swamp model create $MODEL_TYPE ...'." >&2
+    exit 1
+  fi
+  for name in "${names[@]}"; do
+    swamp model method run "$name" sync >/dev/null
+  done
+}
+
+dashboard() {
+  swamp data query "modelType == \"$MODEL_TYPE\" && dataType == \"resource\"" --json | python3 -c "
+import json, sys
+
+d = json.load(sys.stdin)
+rows = []
+for r in d.get('results', []):
+    a = r['content']
+    enabled = a['enabled']
+    active = a['active']
+    status = a['lastRunStatus']
+    detail = a.get('lastRunDetail')
+    recognized = a.get('lastRunRecognized', True)
+
+    if not enabled:
+        needs = 'off'
+    elif not recognized:
+        needs = 'yes - unrecognized journal output, check rawJournalTail'
+    elif status == 'failed':
+        needs = f'yes - {detail}' if detail else 'yes - failed'
+    elif detail:
+        needs = f'yes - {detail}'
+    elif not active:
+        needs = 'yes - enabled but not active'
+    else:
+        needs = 'ok'
+
+    rows.append((
+        a.get('label', r['modelName']), a['unit'], str(enabled), str(active),
+        a.get('lastRunAt') or '-', status, needs,
+    ))
+
+header = ('Instance', 'Unit', 'Enabled', 'Active', 'Last Run', 'Status', 'Needs Addressing')
+rows.sort()
+widths = [max(len(str(row[i])) for row in [header] + rows) for i in range(len(header))]
+
+def fmt(row):
+    return '  '.join(str(v).ljust(widths[i]) for i, v in enumerate(row))
+
+print(fmt(header))
+print(fmt(tuple('-' * w for w in widths)))
+for row in rows:
+    print(fmt(row))
+"
+}
+
+toggle() {
+  sync_all
+  local names name enabled confirm
+  mapfile -t names < <(instances)
+  echo "Select a unit to toggle:"
+  select name in "${names[@]}" "cancel"; do
+    if [ "${name:-}" = "cancel" ]; then
+      echo "Cancelled."
+      return 0
+    elif [ -n "${name:-}" ]; then
+      break
+    fi
+    echo "Not a valid choice." >&2
+  done
+
+  enabled=$(swamp data query "modelType == \"$MODEL_TYPE\" && modelName == \"$name\" && dataType == \"resource\"" --json \
+    | python3 -c "import json, sys; print(json.load(sys.stdin)['results'][0]['content']['enabled'])")
+
+  if [ "$enabled" = "True" ]; then
+    read -r -p "$name is currently enabled. Disable it? [y/N] " confirm
+    [ "${confirm,,}" = "y" ] && swamp model method run "$name" disable || echo "Cancelled."
+  else
+    read -r -p "$name is currently disabled. Enable it? [y/N] " confirm
+    [ "${confirm,,}" = "y" ] && swamp model method run "$name" enable || echo "Cancelled."
+  fi
+}
+
+watch_cmd() {
+  setsid foot -T "swamp-panel monitor" watch -n 30 -c swamp-panel >/dev/null 2>&1 &
+  disown
+  echo "Opened. Close the window whenever you don't need it — it's independent of this shell."
+}
+
+case "${1:-status}" in
+  status)
+    sync_all
+    dashboard
+    ;;
+  toggle)
+    toggle
+    ;;
+  on)
+    [ $# -ge 2 ] || { usage; exit 1; }
+    swamp model method run "$2" enable
+    ;;
+  off)
+    [ $# -ge 2 ] || { usage; exit 1; }
+    swamp model method run "$2" disable
+    ;;
+  watch)
+    watch_cmd
+    ;;
+  -h|--help)
+    usage
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

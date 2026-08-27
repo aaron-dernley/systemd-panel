@@ -1,0 +1,16 @@
+type: '@aaronge/systemd-panel'
+typeVersion: 2026.08.27.1
+id: 936df6ec-dd1d-4389-a144-52af88c4c15e
+name: rpi-health
+version: 1
+tags: {}
+globalArguments:
+  unit: swamp-workflow-rpi-health.timer
+  logUnit: swamp-workflow-rpi-health.service
+  kind: timer
+  label: rpi-health
+  useSudo: true
+  systemctlPath: systemctl
+  journalctlPath: journalctl
+  sudoPath: sudo
+methods: {}

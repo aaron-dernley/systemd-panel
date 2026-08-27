@@ -1,0 +1,16 @@
+type: '@aaronge/systemd-panel'
+typeVersion: 2026.08.27.1
+id: 4ed44063-d1d9-4ef2-acd2-a3362674f370
+name: rpi-workflows-thermal-integrity
+version: 1
+tags: {}
+globalArguments:
+  unit: swamp-workflow-rpi-workflows-thermal-integrity.timer
+  logUnit: swamp-workflow-rpi-workflows-thermal-integrity.service
+  kind: timer
+  label: rpi-workflows-thermal-integrity
+  useSudo: true
+  systemctlPath: systemctl
+  journalctlPath: journalctl
+  sudoPath: sudo
+methods: {}

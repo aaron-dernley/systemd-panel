@@ -1,0 +1,16 @@
+type: '@aaronge/systemd-panel'
+typeVersion: 2026.08.27.1
+id: eda19c51-ef69-49f9-9897-50e03dc7a248
+name: rpi-boot-config
+version: 1
+tags: {}
+globalArguments:
+  unit: swamp-workflow-rpi-boot-config.timer
+  logUnit: swamp-workflow-rpi-boot-config.service
+  kind: timer
+  label: rpi-boot-config
+  useSudo: true
+  systemctlPath: systemctl
+  journalctlPath: journalctl
+  sudoPath: sudo
+methods: {}

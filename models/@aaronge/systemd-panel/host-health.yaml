@@ -1,0 +1,16 @@
+type: '@aaronge/systemd-panel'
+typeVersion: 2026.08.27.1
+id: 93115d93-7539-49d4-932b-b416067c0646
+name: host-health
+version: 1
+tags: {}
+globalArguments:
+  unit: swamp-workflow-host-health.timer
+  logUnit: swamp-workflow-host-health.service
+  kind: timer
+  label: host-health
+  useSudo: true
+  systemctlPath: systemctl
+  journalctlPath: journalctl
+  sudoPath: sudo
+methods: {}
