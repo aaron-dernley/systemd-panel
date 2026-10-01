@@ -124,9 +124,16 @@ swamp-panel watch      # dashboard in a detached terminal, refreshing every 30s
     `lastRunStatus: "unknown"` instead of `"failed"`. A run that technically
     "succeeded" but had a failed low-severity assertion still gets a
     non-null `lastRunDetail` — the exact "needs a look even though it
-    didn't fail outright" case this was built to catch. A journal with no
-    recognizable line at all (never run, or a future format change) sets
-    `lastRunRecognized: false` and preserves the raw tail rather than
+    didn't fail outright" case this was built to catch. When the journal
+    has nothing recognizable at all — the paired service runs something
+    other than `swamp workflow run`, e.g. a wrapper script calling `swamp
+    model method run` directly, as this family's own `iss-tracker` and
+    `can-i-hang-my-washing-out` do — this falls back (as of 2026.10.01.3)
+    to `logUnit`'s own `systemctl show` exit state, which systemd sets
+    from the real exit code regardless of what the process printed. Only
+    when even that fallback is indeterminate (still running, or no
+    structured fields at all — effectively never run) does it set
+    `lastRunRecognized: false` and preserve the raw tail, rather than
     guessing.
   - `service`: reads `systemctl show`'s `ActiveState`/`Result`/
     `ActiveEnterTimestamp` directly — always structured, so

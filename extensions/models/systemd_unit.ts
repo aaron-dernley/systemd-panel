@@ -9,13 +9,21 @@
  * Two status-detection paths, chosen by `kind`:
  * - `"timer"` — the toggled unit only ever fires a paired oneshot
  *   `.service`; systemd never logs run *outcomes* against the timer unit
- *   itself, so the run-status signal comes from parsing that service's
- *   journal. The parser is built and verified against real swamp
- *   workflow-runner output (`Gate: N/M passed`, `Assertions: X passed, Y
- *   failed`, `Completed workflow <name> succeeded|failed in <dur>`) — a
- *   journal that doesn't contain a recognizable line at all is reported
- *   as `lastRunRecognized: false` with the raw tail preserved, rather
- *   than guessing.
+ *   itself, so the run-status signal comes primarily from parsing that
+ *   service's journal. The parser is built and verified against real
+ *   swamp workflow-runner output (`Gate: N/M passed`, `Assertions: X
+ *   passed, Y failed`, `Completed workflow <name> succeeded in <dur>` on
+ *   success, `Failed workflow <name> in <dur>` on failure — two distinct
+ *   phrasings, not one with a succeeded/failed suffix). When the
+ *   journal contains nothing recognizable at all — the paired service
+ *   runs something other than `swamp workflow run` (e.g. `swamp model
+ *   method run` in a wrapper script) — this falls back to `logUnit`'s own
+ *   `systemctl show` exit state (`ActiveState`/`Result`), which systemd
+ *   sets from the process's real exit code regardless of what it
+ *   printed. Only when even that fallback is indeterminate (still
+ *   running, or no structured fields at all — effectively "never run")
+ *   is `lastRunRecognized: false` reported with the raw journal tail
+ *   preserved, rather than guessing.
  * - `"service"` — a persistent process; status comes from
  *   `systemctl show`'s own structured fields (`ActiveState`, `Result`,
  *   `ActiveEnterTimestamp`), which are always well-formed.
@@ -212,6 +220,53 @@ export function parseTimerJournal(lines: string[]): TimerJournalStatus {
   };
 }
 
+/**
+ * Fallback run-outcome signal for a `kind: "timer"` instance whose paired
+ * service never prints a recognizable "Completed workflow .../Failed
+ * workflow ..." line at all — e.g. a service that runs `swamp model
+ * method run` directly (or any other command) rather than `swamp
+ * workflow run`. `parseTimerJournal` alone would report every such unit
+ * as permanently `lastRunStatus: "unknown"` regardless of whether it's
+ * actually succeeding or failing, since it has no workflow-shaped output
+ * to parse.
+ *
+ * `systemctl show`'s `ActiveState`/`Result` fields are authoritative and
+ * universal — set by systemd itself from the process's own exit code,
+ * independent of anything the process printed — so they work for any
+ * oneshot service regardless of what it runs. This only supplies the
+ * coarse succeeded/failed signal (no Gate/Assertions detail, since there
+ * was nothing workflow-shaped to parse); `probeStatus` only calls this
+ * when `parseTimerJournal` found nothing to recognize.
+ */
+export function deriveFallbackFromServiceState(
+  showOutput: string,
+): Pick<TimerJournalStatus, "lastRunAt" | "lastRunStatus" | "lastRunDetail"> {
+  const service = parseServiceShow(showOutput);
+  if (service.lastRunStatus === "failed") {
+    return {
+      lastRunAt: service.lastRunAt,
+      lastRunStatus: "failed",
+      lastRunDetail: service.lastRunDetail,
+    };
+  }
+  if (service.lastRunStatus === "stopped") {
+    // A oneshot service that exited cleanly (ActiveState=inactive,
+    // Result=success) — the closest this signal gets to "succeeded".
+    return {
+      lastRunAt: service.lastRunAt,
+      lastRunStatus: "succeeded",
+      lastRunDetail: null,
+    };
+  }
+  // "running" (still mid-execution) or "unknown" (no structured fields
+  // at all) — neither maps to a trustworthy succeeded/failed verdict.
+  return {
+    lastRunAt: service.lastRunAt,
+    lastRunStatus: "unknown",
+    lastRunDetail: null,
+  };
+}
+
 // --- Model definition ------------------------------------------------------
 
 const GlobalArgsSchema = z.object({
@@ -285,10 +340,14 @@ const StatusSchema = z.object({
   ),
   lastRunRecognized: z.boolean().describe(
     "False only for a timer whose journal tail matched no known " +
-      "run-outcome pattern at all — meaning lastRunAt/lastRunStatus " +
-      "shouldn't be trusted and rawJournalTail needs a human look. " +
-      "Always true for a service, whose systemctl-show fields are " +
-      "always structured.",
+      "run-outcome pattern AND whose paired service's systemctl-show " +
+      "fallback was also indeterminate (still running, or never run) — " +
+      "meaning lastRunAt/lastRunStatus shouldn't be trusted and " +
+      "rawJournalTail needs a human look. True whenever either signal " +
+      "produced a trustworthy succeeded/failed verdict, including via " +
+      "the systemctl-show fallback for a paired service that doesn't " +
+      "run `swamp workflow run`. Always true for a service, whose " +
+      "systemctl-show fields are always structured.",
   ),
   rawJournalTail: z.string().nullable().describe(
     "The unparsed journal tail, stored only when lastRunRecognized is " +
@@ -333,7 +392,31 @@ async function probeStatus(globalArgs: GlobalArgs): Promise<Status> {
       "short-iso",
     ]);
     const lines = journal.stdout.split("\n").filter((line) => line.length > 0);
-    runStatus = parseTimerJournal(lines);
+    const journalStatus = parseTimerJournal(lines);
+
+    if (journalStatus.lastRunRecognized) {
+      runStatus = journalStatus;
+    } else {
+      // Nothing workflow-shaped in the journal (logUnit runs something
+      // other than `swamp workflow run`) — fall back to systemd's own
+      // exit-state for logUnit rather than reporting "unknown" forever.
+      const show = await runCommand(systemctlPath, [
+        "show",
+        logUnit,
+        "-p",
+        "ActiveEnterTimestamp,ActiveState,Result",
+      ]);
+      const fallback = deriveFallbackFromServiceState(show.stdout);
+      const recognized = fallback.lastRunStatus !== "unknown";
+      runStatus = {
+        ...fallback,
+        lastRunRecognized: recognized,
+        // Only preserved when even the fallback couldn't produce a
+        // trustworthy verdict — matches the field's documented contract
+        // (non-null only when lastRunRecognized is false).
+        rawJournalTail: recognized ? null : journalStatus.rawJournalTail,
+      };
+    }
   }
 
   return {
@@ -424,7 +507,7 @@ interface MethodContext {
 /** Model definition for `@aaronge/systemd-panel` — generic systemd unit control. */
 export const model = {
   type: "@aaronge/systemd-panel",
-  version: "2026.10.01.2",
+  version: "2026.10.01.3",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -446,6 +529,16 @@ export const model = {
         "<name> in <dur>' failure phrasing (previously only the success " +
         "phrasing matched, so a genuine failure was misreported as " +
         "lastRunStatus: 'unknown'). No schema change.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.01.3",
+      description:
+        "Add a systemctl-show fallback for timer instances whose paired " +
+        "service never prints a workflow-shaped journal line (e.g. a " +
+        "wrapper script calling 'swamp model method run' directly) — " +
+        "previously always reported as lastRunStatus: 'unknown' " +
+        "regardless of real outcome. No schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

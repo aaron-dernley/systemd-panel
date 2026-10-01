@@ -7,6 +7,7 @@ import {
   withMockedCommand,
 } from "jsr:@swamp-club/swamp-testing@0.20260824.32";
 import {
+  deriveFallbackFromServiceState,
   model,
   parseIsActive,
   parseIsEnabled,
@@ -221,6 +222,43 @@ Deno.test("parseTimerJournal reports lastRunRecognized=false for an empty journa
   assertEquals(result.rawJournalTail, null);
 });
 
+// --- deriveFallbackFromServiceState -----------------------------------------
+//
+// Fallback signal for a timer's paired service that never prints a
+// workflow-shaped journal line at all — e.g. a wrapper script that calls
+// `swamp model method run` directly, like this family's own iss-tracker
+// and can-i-hang-my-washing-out.
+
+Deno.test("deriveFallbackFromServiceState reports succeeded for a cleanly-exited oneshot", () => {
+  const result = deriveFallbackFromServiceState(
+    "Result=success\nActiveState=inactive\nActiveEnterTimestamp=Wed 2026-10-01 09:00:00 BST\n",
+  );
+  assertEquals(result.lastRunStatus, "succeeded");
+  assertEquals(result.lastRunDetail, null);
+  assertEquals(result.lastRunAt, "Wed 2026-10-01 09:00:00 BST");
+});
+
+Deno.test("deriveFallbackFromServiceState reports failed with the Result detail for an exited-nonzero oneshot", () => {
+  const result = deriveFallbackFromServiceState(
+    "Result=exit-code\nActiveState=failed\nActiveEnterTimestamp=Wed 2026-10-01 09:05:00 BST\n",
+  );
+  assertEquals(result.lastRunStatus, "failed");
+  assertEquals(result.lastRunDetail, "Result=exit-code");
+});
+
+Deno.test("deriveFallbackFromServiceState reports unknown while the service is still running", () => {
+  const result = deriveFallbackFromServiceState(
+    "Result=success\nActiveState=active\nActiveEnterTimestamp=Wed 2026-10-01 09:10:00 BST\n",
+  );
+  assertEquals(result.lastRunStatus, "unknown");
+});
+
+Deno.test("deriveFallbackFromServiceState reports unknown for a unit with no structured fields (never run)", () => {
+  const result = deriveFallbackFromServiceState("");
+  assertEquals(result.lastRunStatus, "unknown");
+  assertEquals(result.lastRunAt, null);
+});
+
 // --- sync ------------------------------------------------------------------
 
 Deno.test("sync writes a fully-recognized status for a timer instance", async () => {
@@ -255,6 +293,85 @@ Deno.test("sync writes a fully-recognized status for a timer instance", async ()
   assertEquals(data.active, true);
   assertEquals(data.lastRunStatus, "succeeded");
   assertEquals(data.lastRunRecognized, true);
+});
+
+Deno.test("sync falls back to logUnit's systemctl show when the journal has no workflow-shaped line (e.g. a wrapper script calling 'swamp model method run' directly)", async () => {
+  const { context, getWrittenResources } = createModelTestContext({
+    globalArgs: TIMER_GLOBAL_ARGS,
+    methodName: "sync",
+  });
+
+  const calls: string[][] = [];
+  await withMockedCommand((command, args) => {
+    calls.push([command, ...args]);
+    if (command === "systemctl" && args[0] === "is-enabled") {
+      return { stdout: "enabled\n", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "is-active") {
+      return { stdout: "active\n", code: 0 };
+    }
+    if (command === "journalctl") {
+      // No "Completed workflow"/"Failed workflow" line at all — just
+      // plain output from a wrapper script calling the model directly.
+      return { stdout: "some unrelated plain shell output\n", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "show") {
+      return {
+        stdout:
+          "Result=exit-code\nActiveState=failed\nActiveEnterTimestamp=Wed 2026-10-01 09:05:00 BST\n",
+        code: 0,
+      };
+    }
+    throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
+  }, () => model.methods.sync.execute({}, asContext(context)));
+
+  // The fallback systemctl show targets logUnit (the paired service),
+  // the same unit the journal was read from — not unit (the timer).
+  assert(
+    calls.some((c) =>
+      c[0] === "systemctl" && c[1] === "show" &&
+      c[2] === TIMER_GLOBAL_ARGS.logUnit
+    ),
+  );
+
+  const data = getWrittenResources()[0].data as {
+    lastRunStatus: string;
+    lastRunRecognized: boolean;
+    rawJournalTail: string | null;
+  };
+  assertEquals(data.lastRunStatus, "failed");
+  assertEquals(data.lastRunRecognized, true);
+  assertEquals(data.rawJournalTail, null);
+});
+
+Deno.test("sync reports lastRunRecognized=false only when both the journal and the systemctl-show fallback are indeterminate", async () => {
+  const { context, getWrittenResources } = createModelTestContext({
+    globalArgs: TIMER_GLOBAL_ARGS,
+    methodName: "sync",
+  });
+
+  await withMockedCommand((command, args) => {
+    if (command === "systemctl" && args[0] === "is-enabled") {
+      return { stdout: "enabled\n", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "is-active") {
+      return { stdout: "active\n", code: 0 };
+    }
+    if (command === "journalctl") return { stdout: "", code: 0 };
+    if (command === "systemctl" && args[0] === "show") {
+      return { stdout: "", code: 0 };
+    }
+    throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
+  }, () => model.methods.sync.execute({}, asContext(context)));
+
+  const data = getWrittenResources()[0].data as {
+    lastRunStatus: string;
+    lastRunRecognized: boolean;
+    rawJournalTail: string | null;
+  };
+  assertEquals(data.lastRunStatus, "unknown");
+  assertEquals(data.lastRunRecognized, false);
+  assertEquals(data.rawJournalTail, null);
 });
 
 Deno.test("sync writes a running status for a service instance via systemctl show, not journalctl", async () => {
@@ -298,6 +415,9 @@ Deno.test("sync reports a disabled/inactive timer without throwing (detection, n
       return { stdout: "inactive\n", code: 3 };
     }
     if (command === "journalctl") return { stdout: "", code: 0 };
+    if (command === "systemctl" && args[0] === "show") {
+      return { stdout: "", code: 0 };
+    }
     throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
   }, () => model.methods.sync.execute({}, asContext(context)));
 
@@ -328,6 +448,9 @@ Deno.test("enable runs sudo systemctl enable --now, then writes refreshed status
       return { stdout: "active\n", code: 0 };
     }
     if (command === "journalctl") return { stdout: "", code: 0 };
+    if (command === "systemctl" && args[0] === "show") {
+      return { stdout: "", code: 0 };
+    }
     throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
   }, () => model.methods.enable.execute({}, asContext(context)));
 
@@ -360,6 +483,9 @@ Deno.test("enable skips sudo when useSudo is false", async () => {
       return { stdout: "active\n", code: 0 };
     }
     if (command === "journalctl") return { stdout: "", code: 0 };
+    if (command === "systemctl" && args[0] === "show") {
+      return { stdout: "", code: 0 };
+    }
     throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
   }, () => model.methods.enable.execute({}, asContext(context)));
 
@@ -411,6 +537,9 @@ Deno.test("disable runs sudo systemctl disable --now, then writes refreshed stat
       return { stdout: "inactive\n", code: 3 };
     }
     if (command === "journalctl") return { stdout: "", code: 0 };
+    if (command === "systemctl" && args[0] === "show") {
+      return { stdout: "", code: 0 };
+    }
     throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
   }, () => model.methods.disable.execute({}, asContext(context)));
 
