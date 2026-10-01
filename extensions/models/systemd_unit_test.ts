@@ -422,3 +422,167 @@ Deno.test("enable on a service instance re-probes via systemctl show, not journa
   assertEquals(data.enabled, true);
   assertEquals(data.lastRunStatus, "running");
 });
+
+// --- restart -----------------------------------------------------------
+
+Deno.test("restart on a timer instance resets-failed and restarts logUnit, not unit", async () => {
+  const { context, getWrittenResources } = createModelTestContext({
+    globalArgs: TIMER_GLOBAL_ARGS,
+    methodName: "restart",
+  });
+
+  const calls: string[][] = [];
+  await withMockedCommand((command, args) => {
+    calls.push([command, ...args]);
+    if (command === "sudo") return { stdout: "", code: 0 };
+    if (command === "systemctl" && args[0] === "is-enabled") {
+      return { stdout: "enabled\n", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "is-active") {
+      return { stdout: "active\n", code: 0 };
+    }
+    if (command === "journalctl") {
+      return { stdout: REAL_HOST_HEALTH_LINES.join("\n") + "\n", code: 0 };
+    }
+    throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
+  }, () => model.methods.restart.execute({}, asContext(context)));
+
+  assert(
+    calls.some((c) =>
+      c[0] === "sudo" && c[1] === "systemctl" && c[2] === "reset-failed" &&
+      c[3] === TIMER_GLOBAL_ARGS.logUnit
+    ),
+  );
+  assert(
+    calls.some((c) =>
+      c[0] === "sudo" && c[1] === "systemctl" && c[2] === "restart" &&
+      c[3] === TIMER_GLOBAL_ARGS.logUnit
+    ),
+  );
+  assert(!calls.some((c) => c[3] === TIMER_GLOBAL_ARGS.unit));
+  const data = getWrittenResources()[0].data as { lastRunStatus: string };
+  assertEquals(data.lastRunStatus, "succeeded");
+});
+
+Deno.test("restart on a service instance (logUnit defaults to unit) restarts unit itself", async () => {
+  const { context } = createModelTestContext({
+    globalArgs: SERVICE_GLOBAL_ARGS,
+    methodName: "restart",
+  });
+
+  const calls: string[][] = [];
+  await withMockedCommand((command, args) => {
+    calls.push([command, ...args]);
+    if (command === "sudo") return { stdout: "", code: 0 };
+    if (command === "systemctl" && args[0] === "is-enabled") {
+      return { stdout: "enabled\n", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "is-active") {
+      return { stdout: "active\n", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "show") {
+      return { stdout: REAL_RUNNING_SHOW, code: 0 };
+    }
+    throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
+  }, () => model.methods.restart.execute({}, asContext(context)));
+
+  assert(
+    calls.some((c) =>
+      c[0] === "sudo" && c[1] === "systemctl" && c[2] === "restart" &&
+      c[3] === SERVICE_GLOBAL_ARGS.unit
+    ),
+  );
+});
+
+Deno.test("restart skips sudo when useSudo is false", async () => {
+  const { context } = createModelTestContext({
+    globalArgs: { ...TIMER_GLOBAL_ARGS, useSudo: false },
+    methodName: "restart",
+  });
+
+  const calls: string[][] = [];
+  await withMockedCommand((command, args) => {
+    calls.push([command, ...args]);
+    if (command === "systemctl" && args[0] === "is-enabled") {
+      return { stdout: "enabled\n", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "is-active") {
+      return { stdout: "active\n", code: 0 };
+    }
+    if (command === "systemctl") return { stdout: "", code: 0 };
+    if (command === "journalctl") {
+      return { stdout: REAL_HOST_HEALTH_LINES.join("\n") + "\n", code: 0 };
+    }
+    throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
+  }, () => model.methods.restart.execute({}, asContext(context)));
+
+  assert(!calls.some((c) => c[0] === "sudo"));
+  assert(
+    calls.some((c) =>
+      c[0] === "systemctl" && c[1] === "reset-failed" &&
+      c[2] === TIMER_GLOBAL_ARGS.logUnit
+    ),
+  );
+});
+
+Deno.test("restart throws and writes nothing when systemctl restart fails", async () => {
+  const { context, getWrittenResources } = createModelTestContext({
+    globalArgs: TIMER_GLOBAL_ARGS,
+    methodName: "restart",
+  });
+
+  await assertRejects(
+    () =>
+      withMockedCommand(
+        (command, args) => {
+          if (
+            command === "sudo" && args[0] === "systemctl" &&
+            args[1] === "reset-failed"
+          ) {
+            return { stdout: "", code: 0 };
+          }
+          if (
+            command === "sudo" && args[0] === "systemctl" &&
+            args[1] === "restart"
+          ) {
+            return { stdout: "", stderr: "Unit not found.", code: 1 };
+          }
+          throw new Error(
+            `unexpected command in test: ${command} ${args.join(" ")}`,
+          );
+        },
+        () => model.methods.restart.execute({}, asContext(context)),
+      ).then((r) => r.result),
+    Error,
+    "Unit not found",
+  );
+  assertEquals(getWrittenResources().length, 0);
+});
+
+Deno.test("restart tolerates reset-failed failing (nothing to reset) and still restarts", async () => {
+  const { context, getWrittenResources } = createModelTestContext({
+    globalArgs: TIMER_GLOBAL_ARGS,
+    methodName: "restart",
+  });
+
+  await withMockedCommand((command, args) => {
+    if (command === "sudo" && args[1] === "reset-failed") {
+      return { stdout: "", stderr: "No such unit", code: 1 };
+    }
+    if (command === "sudo" && args[1] === "restart") {
+      return { stdout: "", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "is-enabled") {
+      return { stdout: "enabled\n", code: 0 };
+    }
+    if (command === "systemctl" && args[0] === "is-active") {
+      return { stdout: "active\n", code: 0 };
+    }
+    if (command === "journalctl") {
+      return { stdout: REAL_HOST_HEALTH_LINES.join("\n") + "\n", code: 0 };
+    }
+    throw new Error(`unexpected command in test: ${command} ${args.join(" ")}`);
+  }, () => model.methods.restart.execute({}, asContext(context)));
+
+  assertEquals(getWrittenResources().length, 1);
+});

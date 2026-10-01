@@ -361,6 +361,42 @@ async function setEnabled(
   }
 }
 
+/**
+ * Clear a unit's failed-state latch (`systemctl reset-failed`) and restart
+ * it. Targets `logUnit` (defaulting to `unit`), not `unit` itself: for a
+ * `kind: "timer"` instance, `unit` is the `.timer`, and restarting a timer
+ * only reschedules its next fire — it does not re-run the job now. The
+ * paired oneshot `.service` (`logUnit`) is what actually needs restarting
+ * to retry immediately, which is also exactly the unit whose journal this
+ * extension already reads for run status. For a `kind: "service"`
+ * instance, `logUnit` defaults to `unit`, so this is a no-op distinction.
+ * `reset-failed` runs first so systemd doesn't refuse the restart with
+ * "unit is in a failed state" on older systemd versions that gate
+ * start-while-failed.
+ */
+async function restartUnit(globalArgs: GlobalArgs): Promise<void> {
+  const { useSudo, sudoPath, systemctlPath } = globalArgs;
+  const target = globalArgs.logUnit ?? globalArgs.unit;
+  const run = (args: string[]) =>
+    useSudo
+      ? runCommand(sudoPath, [systemctlPath, ...args])
+      : runCommand(systemctlPath, args);
+
+  // Best-effort: a unit that was never in a failed state (e.g. only
+  // inactive/stopped) doesn't need its latch cleared, and some systemd
+  // versions exit non-zero here when there's nothing to reset.
+  await run(["reset-failed", target]);
+
+  const result = await run(["restart", target]);
+  if (!result.success) {
+    throw new Error(
+      `systemctl restart ${target} failed (exit ${result.code}): ${
+        result.stderr.trim() || result.stdout.trim()
+      }`,
+    );
+  }
+}
+
 interface MethodContext {
   globalArgs: GlobalArgs;
   logger: MinimalLogger;
@@ -374,13 +410,19 @@ interface MethodContext {
 /** Model definition for `@aaronge/systemd-panel` — generic systemd unit control. */
 export const model = {
   type: "@aaronge/systemd-panel",
-  version: "2026.08.27.2",
+  version: "2026.10.01.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
       toVersion: "2026.08.27.2",
       description:
         "Version bump, no schema changes (bundled swamp-panel CLI fix only).",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.01.1",
+      description:
+        "Add restart method. No schema change to existing instances.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],
@@ -442,6 +484,26 @@ export const model = {
         await setEnabled(context.globalArgs, false);
         const status = await probeStatus(context.globalArgs);
         context.logger.info("Disabled {unit}", { unit: status.unit });
+        const handle = await context.writeResource("status", "status", status);
+        return { dataHandles: [handle] };
+      },
+    },
+    restart: {
+      description:
+        "Clear any failed-state latch and restart the unit that actually " +
+        "runs the job (logUnit, or unit itself for a service), then " +
+        "refresh status. For a timer instance this re-runs the paired " +
+        "oneshot service immediately rather than just rescheduling it.",
+      arguments: z.object({}),
+      execute: async (_args: Record<string, never>, context: MethodContext) => {
+        const target = context.globalArgs.logUnit ?? context.globalArgs.unit;
+        context.logger.info("Restarting {target}", { target });
+        await restartUnit(context.globalArgs);
+        const status = await probeStatus(context.globalArgs);
+        context.logger.info(
+          "Restarted {target}: lastRunStatus={lastRunStatus}",
+          { target, lastRunStatus: status.lastRunStatus },
+        );
         const handle = await context.writeResource("status", "status", status);
         return { dataHandles: [handle] };
       },

@@ -62,6 +62,7 @@ swamp model create @aaronge/systemd-panel my-daemon \
 swamp model method run my-timer sync
 swamp model method run my-timer enable
 swamp model method run my-timer disable
+swamp model method run my-timer restart
 ```
 
 Each method writes one resource, `status`. Run `swamp model type describe
@@ -129,6 +130,20 @@ swamp-panel watch      # dashboard in a detached terminal, refreshing every 30s
 by default), throwing before writing anything if the command fails, then
 immediately re-probe status so stored state reflects the change without a
 separate `sync` call.
+
+`restart` clears any failed-state latch (`systemctl reset-failed`,
+best-effort — its result isn't checked, since a unit that was never
+failed has nothing to reset) and restarts whichever unit actually runs
+the job: `logUnit` for a `timer` instance (restarting the `.timer` itself
+would only reschedule its next fire, not re-run the job now), or `unit`
+directly for a `service`. Throws before writing anything if the restart
+itself fails, then re-probes status the same way `enable`/`disable` do.
+Useful for driving automated remediation (e.g. a health-check workflow
+that restarts anything it finds in a failed state) — but note that for a
+unit failing due to a persistent external condition (a hardware fault, a
+port held by an unrelated process), restarting just re-runs the same
+check and gets the same failure; it only helps with genuinely transient
+failures.
 
 ## Workflow
 
