@@ -134,20 +134,31 @@ export interface TimerJournalStatus {
 }
 
 const COMPLETED_RE = /Completed workflow \S+ (succeeded|failed) in \S+/;
+const FAILED_RE = /Failed workflow \S+ in \S+/;
 const GATE_RE = /Gate: (\d+\/\d+ passed(?:, \d+ skipped)?)/;
 const ASSERTIONS_RE = /Assertions: (\d+ passed(?:, \d+ failed)?)/;
 const ISO_TS_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2})/;
 
 /**
  * Parse `journalctl -u <logUnit> -o short-iso` lines (newest last) for the
- * last "Completed workflow ... succeeded|failed" line a swamp workflow
- * run prints, plus the Gate/Assertions summary lines immediately above
- * it. Verified against two real captures on this family's own Pi: a
+ * last run-completion line a swamp workflow run prints, plus the
+ * Gate/Assertions summary lines immediately above it. Two distinct
+ * phrasings mark completion, confirmed against this family's own real
+ * runs — swamp does not use one consistent "Completed ... succeeded|
+ * failed" sentence for both outcomes:
+ * - success: "Completed workflow <name> succeeded in <dur>"
+ * - failure: "Failed workflow <name> in <dur>" (no "Completed" prefix,
+ *   no "failed" suffix word — captured verbatim from a real
+ *   `link-integrity` run: "Failed workflow link-integrity in 4.4s")
+ *
+ * Verified against three real captures on this family's own Pi: a
  * fully-passing `host-health` run ("Gate: 9/9 passed, 0 skipped" /
- * "Assertions: 4 passed") and a `rpi-connect` run that "succeeded"
- * overall while one low-severity assert failed ("Gate: 2/3 passed, 0
- * skipped" / "Assertions: 0 passed, 1 failed") — exactly the "technically
- * succeeded but still needs a look" case `lastRunDetail` exists for.
+ * "Assertions: 4 passed"), a `rpi-connect` run that "succeeded" overall
+ * while one low-severity assert failed ("Gate: 2/3 passed, 0 skipped" /
+ * "Assertions: 0 passed, 1 failed" — exactly the "technically succeeded
+ * but still needs a look" case `lastRunDetail` exists for), and a
+ * genuinely failed `link-integrity` run ("Assertions: 0 passed, 1
+ * failed" / "Failed workflow link-integrity in 4.4s").
  *
  * A journal tail with no recognizable line at all (unit never ran, or a
  * future swamp version changes this log shape) reports
@@ -157,8 +168,11 @@ const ISO_TS_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2})/;
 export function parseTimerJournal(lines: string[]): TimerJournalStatus {
   for (let i = lines.length - 1; i >= 0; i--) {
     const completed = COMPLETED_RE.exec(lines[i]);
-    if (!completed) continue;
-    const status = completed[1] as "succeeded" | "failed";
+    const failed = completed ? null : FAILED_RE.exec(lines[i]);
+    if (!completed && !failed) continue;
+    const status = completed
+      ? (completed[1] as "succeeded" | "failed")
+      : "failed";
     const tsMatch = ISO_TS_RE.exec(lines[i]);
 
     let gate: string | null = null;
@@ -410,7 +424,7 @@ interface MethodContext {
 /** Model definition for `@aaronge/systemd-panel` — generic systemd unit control. */
 export const model = {
   type: "@aaronge/systemd-panel",
-  version: "2026.10.01.1",
+  version: "2026.10.01.2",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -423,6 +437,15 @@ export const model = {
       toVersion: "2026.10.01.1",
       description:
         "Add restart method. No schema change to existing instances.",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
+    {
+      toVersion: "2026.10.01.2",
+      description:
+        "Fix parseTimerJournal to recognize the real 'Failed workflow " +
+        "<name> in <dur>' failure phrasing (previously only the success " +
+        "phrasing matched, so a genuine failure was misreported as " +
+        "lastRunStatus: 'unknown'). No schema change.",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
   ],

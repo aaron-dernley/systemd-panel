@@ -162,7 +162,7 @@ Deno.test("parseTimerJournal surfaces lastRunDetail for a run that succeeded ove
   );
 });
 
-Deno.test("parseTimerJournal reports failed with detail for a genuinely failed run", () => {
+Deno.test("parseTimerJournal reports failed with detail for a genuinely failed run (defensive: 'Completed ... failed' shape)", () => {
   const lines = [
     "2026-08-27T09:00:00+01:00 raspberrypi swamp[1]: Gate: 1/3 passed, 0 skipped",
     "2026-08-27T09:00:00+01:00 raspberrypi swamp[1]: Assertions: 1 passed, 2 failed",
@@ -174,6 +174,35 @@ Deno.test("parseTimerJournal reports failed with detail for a genuinely failed r
     result.lastRunDetail,
     "Gate: 1/3 passed, 0 skipped; Assertions: 1 passed, 2 failed",
   );
+});
+
+// Captured verbatim from a real, genuinely failing swamp-workflow-
+// rpi-workflows-link-integrity.service run on this family's own Pi
+// (2026-10-01). Regression test for a real bug: swamp's actual failure
+// output is "Failed workflow <name> in <dur>" — a completely different
+// sentence from the success case, not "Completed workflow <name> failed
+// in <dur>" as the original COMPLETED_RE alone assumed. Before this fix,
+// a genuinely failed run was silently reported as lastRunStatus:
+// "unknown" (lastRunRecognized: false) instead of "failed", which meant
+// nothing driven by lastRunStatus === "failed" — including the restart
+// method's own typical trigger condition in a health-check workflow —
+// could ever fire for a real failure.
+const REAL_LINK_INTEGRITY_FAILURE_LINES = [
+  "2026-10-01T09:37:10+01:00 raspberrypi swamp[635408]:   report │ completed in 2.2s · 08:37:10 UTC",
+  "2026-10-01T09:37:11+01:00 raspberrypi swamp[635408]:   system │ Assertions: 0 passed, 1 failed",
+  "2026-10-01T09:37:11+01:00 raspberrypi swamp[635408]:   system │ Failed workflow link-integrity in 4.4s · 08:37:11 UTC",
+  "2026-10-01T09:37:11+01:00 raspberrypi swamp[635408]:   system │ PCIe link degraded: [object Object] — negotiated speed/width below capable on at least one device.",
+];
+
+Deno.test("parseTimerJournal recognizes the real 'Failed workflow <name> in <dur>' phrasing (no 'Completed' prefix)", () => {
+  const result = parseTimerJournal(REAL_LINK_INTEGRITY_FAILURE_LINES);
+  assertEquals(result.lastRunRecognized, true);
+  assertEquals(result.lastRunStatus, "failed");
+  assertEquals(
+    result.lastRunDetail,
+    "Assertions: 0 passed, 1 failed",
+  );
+  assertEquals(result.lastRunAt, "2026-10-01T09:37:11+01:00");
 });
 
 Deno.test("parseTimerJournal reports lastRunRecognized=false and preserves the raw tail when nothing matches", () => {

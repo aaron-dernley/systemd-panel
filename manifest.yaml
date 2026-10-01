@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@aaronge/systemd-panel"
-version: "2026.10.01.1"
+version: "2026.10.01.2"
 description: "Enable, disable, and inspect the status of any systemd unit through swamp — one typed, versioned model instance per unit, with enablement, activation, and last-run outcome (parsed from journalctl for timers, from systemctl show for services) all in one place. Not tied to any particular workload or hardware."
 
 repository: https://github.com/aaron-dernley/systemd-panel

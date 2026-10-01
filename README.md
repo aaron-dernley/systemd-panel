@@ -113,9 +113,15 @@ swamp-panel watch      # dashboard in a detached terminal, refreshing every 30s
   unit reported as `false` is a normal result, not a failure). Run
   outcome depends on `kind`:
   - `timer`: parses `journalctl -u <logUnit> -o short-iso` for the last
-    `Completed workflow <name> succeeded|failed in <dur>` line a swamp
-    workflow run prints, plus the `Gate: N/M passed` / `Assertions: X
-    passed, Y failed` lines immediately above it. A run that technically
+    run-completion line a swamp workflow run prints, plus the `Gate: N/M
+    passed` / `Assertions: X passed, Y failed` lines immediately above
+    it. Two distinct phrasings mark completion — swamp does not use one
+    consistent sentence for both outcomes: success prints `Completed
+    workflow <name> succeeded in <dur>`; failure prints `Failed workflow
+    <name> in <dur>` (no "Completed" prefix at all). Both are recognized
+    as of 2026.10.01.2 — an earlier version only matched the success
+    phrasing, so a genuine failure was silently reported as
+    `lastRunStatus: "unknown"` instead of `"failed"`. A run that technically
     "succeeded" but had a failed low-severity assertion still gets a
     non-null `lastRunDetail` — the exact "needs a look even though it
     didn't fail outright" case this was built to catch. A journal with no
